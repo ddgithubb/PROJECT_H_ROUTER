@@ -1,0 +1,114 @@
+package main
+
+import (
+	"sync"
+	"time"
+
+	"github.com/segmentio/fasthash/fnv1a"
+)
+
+const MAX_PAYLOAD_LIST_LENGTH = 50
+
+// const CONCURRENCY_FACTOR = 4
+// var CONCURRENCY = runtime.NumCPU() * CONCURRENCY_FACTOR
+
+type version_table_struct struct {
+	last_active    int64
+	latest_version int64
+	payload_list   []string
+}
+
+type version_table_shard struct {
+	version_table map[string]*version_table_struct
+	sync.RWMutex
+}
+
+var version_table_shards []*version_table_shard
+
+func Start_Messages_Services() {
+	create_table()
+	expire_messages_manager()
+}
+
+func create_table() {
+	version_table_shards = make([]*version_table_shard, CONCURRENCY)
+	for i := 0; uint32(i) < CONCURRENCY; i++ {
+		version_table_shards[i] = &version_table_shard{ version_table: make(map[string]*version_table_struct) }
+	}
+}
+
+func expire_messages_manager() {
+	//expire after created at 3:00am LOCAL
+	//check timestamp of last message
+	//this is also where gc should be working as we deallocate large amounts of nil values
+}
+
+func Init_Version(id string, last_v int64) (v int64, payload []string, update bool) {
+	update = false
+	payload = []string{}
+	shard := version_table_shards[fnv1a.HashString32(id)%uint32(CONCURRENCY)]
+	shard.Lock()
+	versions, ok := shard.version_table[id]
+	if ok {
+		v = versions.latest_version
+		if last_v != 0 {
+			if index := MAX_PAYLOAD_LIST_LENGTH - (v - last_v) - 1; index >= 0 && index < MAX_PAYLOAD_LIST_LENGTH {
+				payload = versions.payload_list[index + 1:]
+			} else {
+				update = true
+			}
+		}
+	} else {
+		versions := new(version_table_struct)
+		versions.payload_list = make([]string, MAX_PAYLOAD_LIST_LENGTH)
+		versions.latest_version = 0
+		versions.payload_list[0] = "0"
+		v = 0
+		if last_v != 0 {
+			update = true
+		}
+	}
+	versions.last_active = time.Now().UnixMilli()
+	shard.version_table[id] = versions
+	shard.Unlock()
+	return
+}
+
+func Append_Version(id string, payload string, update_active bool) {
+	shard := version_table_shards[fnv1a.HashString32(id)%uint32(CONCURRENCY)]
+	shard.Lock()
+	versions, ok := shard.version_table[id]
+	if ok {
+		if len(versions.payload_list) == MAX_PAYLOAD_LIST_LENGTH {
+			versions.payload_list = versions.payload_list[1:]
+		}
+		versions.payload_list = append(versions.payload_list, payload)
+		versions.latest_version += 1
+		if update_active {
+			versions.last_active = time.Now().UnixMilli()
+		}
+		shard.version_table[id] = versions
+	}
+	shard.Unlock()
+}
+
+func Request_Version(id string, version int64) (payload string) {
+	payload = "nil"
+	shard := version_table_shards[fnv1a.HashString32(id)%uint32(CONCURRENCY)]
+	shard.Lock()
+	_, ok := shard.version_table[id]
+	if ok {
+		if index := MAX_PAYLOAD_LIST_LENGTH - (shard.version_table[id].latest_version - version) - 1; index >= 0 && index < MAX_PAYLOAD_LIST_LENGTH {
+			payload = shard.version_table[id].payload_list[index]
+		}
+		shard.version_table[id].last_active = time.Now().UnixMilli()
+	}
+	shard.Unlock()
+	return
+}
+
+// JUST A TEMPLATE
+// func convert_version_to_index(latest_v int64, v int64) {
+// 	return MAX_PAYLOAD_LIST_LENGTH - (latest_v - v) - 1
+// }
+

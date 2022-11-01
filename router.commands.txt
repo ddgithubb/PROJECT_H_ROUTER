@@ -1,0 +1,141 @@
+Router Commands.
+
+# Template
+
+"[1][2]3[:]:4"
+
+1 => op # (1 byte)
+2 => size of "3[:]:4" (4 bytes, uint32)
+3 => parameters ([]string) REQUIRED
+4 => payload (string) OPTIONAl
+
+n = len(3)
+
+PARAMETER? = boolean value of '0' or '1'
+_________________________________________________________________________
+
+# Operations 
+    - IN = IN as is (default)
+    - R_IN(sock_id, ws_id) = equivalent to R_BOTH (router command)
+    - OUT = OUT as is
+    - R_OUT(sock_id, ws_id) = OUT in routing wrapper (OUT SOCK)
+    - BOTH = IN and OUT 
+    - R_BOTH(sock_id, ws_id) = R_IN and R_OUT (IN SOCK, OUT SOCK)
+    - SOCK = socket-router
+    - API = api-router
+    - ROUT = router-router
+    - ALL = any-router
+
+heartbeat IN ALL:
+    1 = [1]
+    3 = [v][next_expected_heartbeat_unix_nano](1 + 8 = 9 bytes) 
+
+heartbeat IN SOCK:
+    1 = [1]
+    3 = [v][next_expected_heartbeat_unix_nano][amount_received](1 + 8 + 4 = 13 bytes) 
+
+heartbeat OUT ALL:
+    1 = [1]
+    3 = [v](1 byte)
+
+heartbeat OUT API:
+    1 = [1]
+    3 = [v][amount_received](1 + 4 = 5 bytes)
+
+new_conn ALL:
+    1 = [2]
+    3 = "conn_id:conn_group:old_conn_id"
+
+new_conn OUT ALL:
+    1 = [2]
+    3 = "success?"
+
+recover_socket SOCK:
+    1 = [3]
+    3 = "sock_id"
+
+recover_socket OUT SOCK:
+    1 = [3]
+    3 = "success?"
+
+...
+
+connect_session SOCK:
+    1 = [20]
+    3 = "user_id:session_id:ws_id"
+
+connect_session R_OUT:
+    1 = [20]
+    3 = "success?"
+
+recover_session SOCK:
+    1 = [21]
+    3 = "user_id:session_id:ws_id:prev_ws_id"
+
+recover_session R_OUT:
+    1 = [21]
+    3 = "success?"
+
+remove_session SOCK:
+    1 = [22]
+    3 = "user_id:session_id:ws_id"
+
+add_session ROUT: | planned
+add_session OUT ROUT: | planned
+
+...
+
+get_prev_state R_OUT(prev_sock_id, prev_ws_id) SOCK:
+    1 = [30]
+    3 = "new_sock_id:new_ws_id"
+
+get_prev_state SOCK:
+    1 = [30]
+    3 = "new_sock_id:new_ws_id:success?"
+    4 = :"state" = :"STATE_JSON_STRING"
+
+send_prev_state R_OUT(new_sock_id, new_ws_id) SOCK:
+    1 = [31]
+    3 = "success?"
+    4 = :"state" = :"STATE_JSON_STRING"
+
+close_ws_connection R_OUT(old_sock_id, old_ws_id) SOCK:
+    1 = [32]
+
+...
+
+route_to_ws(op, op_param[], payload) OUT SOCK:
+    1 = [50]
+    3 = "ws_id"
+    4 = :"underlying_payload" = :"[op]op_param[]?:payload?"
+
+route_message_to_ws(op, op_param[], payload) OUT SOCK: | Cached in case of failure
+    1 = [51]
+    3 = "ws_id"
+    4 = :"underlying_payload" = :"[op]op_param[]?:payload?"
+
+route_to_sock(op, op_param[], payload) OUT ROUT: | planned
+    1 = [52]
+    3 = "sock_id"
+    4 = :"packaged_op" = :":[op]op_param[]?:payload?"
+
+route_to_sock(packaged_op) IN ROUT: | planned
+    1 = [52]
+    3 = "sock_id"
+    4 = :"packaged_op"
+
+route_from_router_to_ws(underlying_payload) BOTH ROUT: | planned
+    1 = [53]
+    3 = "sock_id:ws_id"
+    4 = :"underlying_payload"
+
+...
+
+send_payload API:
+    1 = [100]
+    3 = "origin_session_id:origin_user_id:dest_user_id"
+    4 = :"payload" = :"MESSAGE_JSON_STRING"
+
+send_payload R_OUT:
+    1 = [100]
+    4 = "payload" = "MESSAGE_JSON_STRING"
